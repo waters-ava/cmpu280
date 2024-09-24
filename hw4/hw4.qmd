@@ -1,0 +1,258 @@
+---
+title: "HW 4"
+subtitle: "due 4/6/23"
+author: "Ava Waters"
+date: "4/6/23"
+format:
+  html: 
+    theme: "pulse"
+    self-contained: true
+    embed-resources: true
+fig-asp: 0.618
+fig-width: 10
+execute:
+  warning: false
+  message: false
+---
+
+**Please remember that this homework is to be done individually!** 
+
+**Look at `hw4_instructions.html` for more information on the two data sets and
+for helpful hints throughout.**
+
+## Packages
+
+```{r r_packages}
+library(tidyverse)
+library(reticulate)
+```
+
+```{python python_packages}
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedShuffleSplit
+from sklearn.compose import make_column_transformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.kernel_approximation import Nystroem
+from sklearn.linear_model import SGDClassifier
+from sklearn.metrics import roc_auc_score
+from sklearn.ensemble import GradientBoostingClassifier
+```
+
+# Exercises
+
+```{r}
+# load data
+load("data/vendor_data.RData")
+
+# changing vars to factors
+vendor_data$market <- as.factor(vendor_data$market)
+vendor_data$district <- as.factor(vendor_data$district)
+```
+
+
+## Q1: Data Visualization
+```{r}
+vendor_data %>% drop_na(recent_receipt_7) %>% # drop NA values
+  drop_na(stall_type) %>% # drop NA values
+  ggplot(aes(x=as.factor(recent_receipt_7), fill=stall_type)) + geom_bar(position="fill") +
+  labs(title="Recent Receipt Presentation within Past 7 Days vs. Stall Type", # add titles
+       x="Recent Receipt within Past 7 Days", y="Proportion of Responses", fill="Stall Type") +
+  scale_x_discrete(labels=c("0 (No)", "1 (Yes)")) # change x axis tick labels
+  
+```
+
+This visualization plots the proportion of respondents with each type of stall against whether or not they have shown a receipt within the past 7 days. Since each chunk is relatively similar in size, it doesn't seem like there is a big difference between stall types and the `recent_receipt_7` response. I thought maybe vendors who have more permanent or solid stall types would be more established, which may affect their response (but not sure in which direction). Interestingly, a larger proportion vendors who haven't shown a receipt recently have both the most established and un-established types of stalls.
+
+```{r, include=FALSE}
+# graph between 2 predictors: service offered and profit
+vendor_data %>% ggplot(aes(x=as.factor(service), y=profit)) + geom_boxplot()
+# very small bc of outliers, will do a zoomed in version as well (that is more presentable)
+```
+
+```{r}
+# zoomed in view
+vendor_data %>% drop_na(service) %>% drop_na(profit) %>% # drop NA values
+  ggplot(aes(x=as.factor(service), y=profit)) + geom_boxplot() + 
+  ylim(0, 25000) + # zoom in for better look at boxes
+  labs(title="Vendor's Offering vs. Average Daily Profit", x="Vendor's Offering", 
+       y="Average Daily Profit (Malawian kwacha)") + 
+  scale_x_discrete(labels=c("Good", "Service"))
+  
+```
+
+This visualization illuminates the difference in average daily profit between vendors selling goods versus services. The zoomed-out boxplot (not formatted) reveals that there are many more outliers of average daily profit for vendors that sell goods. These outliers are much higher than the outliers of the service category. In the zoomed-in plot, it shows that vendors selling goods in the upper-half of average daily profits make more than those selling services. However, caution is advised because there is almost ten times as many vendors that sell goods than there are that offer services (2273 vs. 258). With the sample sizes for each group being drastically different, interpreting the results should be taken with a grain of salt.
+
+## Q2: Train-Test Split
+```{python}
+# drop NA values
+vendor_data = r.vendor_data.dropna()
+
+X = vendor_data.drop(["recent_receipt_7", "unequal_test", "market"], axis = 1)
+
+y = np.ravel(vendor_data["recent_receipt_7"])
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, random_state = 20)
+```
+1. We have to drop all `NA`s (and missing values) because having missing data may mess up the model training. If a lot of data is missing from the training set, it would be hard to build a model with incomplete information. Or, the patterns may not be accurate because it does not represent the data. If a lot of data is missing from the test set, the output may not be representative of the model's performance because it has less information than it usually would. This could be a problem if a lot of data is missing, leading to a small amount of remaining observations. Then, the splits would be small and probably less accurate. Also, there may be a systematic reason why some data is missing for some observations. Thinking about why that is, and perhaps investigating, may be more helpful than just ignoring these cases.
+
+2. The trade-off between test set size and training set size relates to the model's performance. If the test set is too small, we may not be able to get an accurate sense of how the model performs on unseen data. The model's performance would be very dependent on what observations fall into this test set. If the training set is too small, it may not accurately represent the data and may lead to a model that doesn't fit all of the data well. This may lead to high variance and error scores when predicting on the test set.
+
+## Q3: Support Vector Machine
+```{python}
+# columns not included are binary cols that we are passing thru
+# categorical cols (by index)
+cat_cols = X.iloc[:, [0, 1, 4, 6, 8, 9, 21, 24]].columns
+# numerical cols (by index)
+num_cols = X.iloc[:, [3, 7, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 22, 23]].columns
+
+preprocessor = make_column_transformer((OneHotEncoder(drop = "first"),
+                                                      cat_cols), 
+                                      (StandardScaler(), num_cols),
+                                      remainder = "passthrough",
+                                      verbose_feature_names_out = False)
+
+# defining the grid of params
+alpha = np.logspace(-4, 4, 10)
+gamma = np.logspace(-4, 4, 10)
+kernel = ["rbf", "linear"]
+
+param_grid_svm = dict(
+  kernel_approx__gamma = gamma, 
+  kernel_approx__kernel = kernel,
+  estimator__alpha = alpha
+)
+
+pipeline_svm = Pipeline(
+  [
+    ("preprocess", preprocessor),
+    ("kernel_approx", Nystroem(random_state = 101)),
+    ("estimator", SGDClassifier(random_state = 102))
+  ]
+)
+
+cv = StratifiedShuffleSplit(n_splits = 5, random_state = 100)
+
+# perform grid search for SVM pipeline
+grid_svm = (
+  GridSearchCV(pipeline_svm, param_grid = param_grid_svm, 
+               scoring = "roc_auc", cv = cv)
+  .fit(X_train, y_train)
+)
+
+# fit pipeline with optimal tuning params
+pipeline_svm_optimal = grid_svm.best_estimator_
+pipeline_svm_optimal.fit(X_train, y_train)
+
+# get AUC from test set
+auc_svm = roc_auc_score(y_test, pipeline_svm_optimal.predict(X_test))
+
+# reset index so i can split according to rows in X_test
+X_test.reset_index(drop = True, inplace = True)
+# split test sets on marriage col
+X_test_married = X_test[X_test["married"] == 1]
+y_test_married = y_test[X_test_married.index]
+X_test_unmarried = X_test[X_test["married"] == 0]
+y_test_unmarried = y_test[X_test_unmarried.index]
+
+# compute AUC scores
+auc_married = roc_auc_score(y_test_married, pipeline_svm_optimal.predict(X_test_married))
+auc_unmarried = roc_auc_score(y_test_unmarried, pipeline_svm_optimal.predict(X_test_unmarried))
+```
+
+We can use ROC curve AUC for SVMs because we can plot the sensitivity and specificity of the model. While ROC curves are usually for probabilities, and SVMs only return the classification (no probability), we can still calculate the true and false positive and negative rates because we have the predicted and true Y values. Then, the ROC curve plots sensitivity (true positive rate) vs. 1 - specificity (false positive rate). Each point represents these values at different threshold values $c$, and the AUC then can be computed from the curve these points form. 
+
+The optimal tuning parameters are:
+
+alpha = `r py$grid_svm$best_params_["estimator__alpha"]`
+
+gamma = `r py$grid_svm$best_params_["kernel_approx__gamma"]`
+
+kernel = `r py$grid_svm$best_params_["kernel_approx__kernel"]`
+
+The AUC on the overall test set is `r py$auc_svm`
+
+The AUC for the subsample of the test set who are married is different from that for the subsample who aren't married. The AUC for married vendors is `r py$auc_married`, whereas the AUC for unmarried vendors is `r py$auc_unmarried`. This could mean that marriage (or the legality of it) affects their behavior in some systematic way and whether they have shown a receipt becomes more predictable (since the model performs better). Or, marriage could be an indicator of another underlying variable that affects both `recent_receipt_7` and marriage status.
+
+## Q4: Gradient Boosting Machine
+```{python}
+# defining the grid of params
+b = np.arange(5000, 8000, 1000) # aka num of trees
+lamb =[0.001, 0.01] # aka learning rate
+d = np.arange(1, 3) # aka num of splits (dept of tree)
+
+param_grid_gbm = dict(
+  gbm__n_estimators = b, 
+  gbm__learning_rate = lamb,
+  gbm__max_depth = d
+)
+
+pipeline_gbm = Pipeline(
+  [
+    ("preprocess", preprocessor),
+    ("gbm", GradientBoostingClassifier(random_state = 0, 
+                                       subsample = 0.5))
+  ]
+)
+
+# perform grid search for SVM pipeline
+grid_gbm = (
+  GridSearchCV(pipeline_gbm, param_grid = param_grid_gbm, 
+               scoring = "roc_auc", cv = cv)
+  .fit(X_train, y_train)
+)
+
+# fit pipeline with optimal tuning params
+pipeline_gbm_optimal = grid_gbm.best_estimator_
+pipeline_gbm_optimal.fit(X_train, y_train)
+
+# get AUC from test set
+auc_gbm = roc_auc_score(y_test, pipeline_gbm_optimal.predict(X_test))
+```
+
+The optimal tuning parameters are:
+
+B = `r py$grid_gbm$best_params_["gbm__n_estimators"]`
+
+$\lambda$ = `r py$grid_gbm$best_params_["gbm__learning_rate"]`
+
+d = `r py$grid_gbm$best_params_["gbm__max_depth"]`
+
+The AUC on the overall test set is `r py$auc_gbm`.
+
+This model performs worse compared to the SVM. Because the AUC is about 0.06 lower than that of the SVM model, it does a bit worse at predicting on unseen data.
+
+## Q5: With Not Randomly Selected Training Data
+```{python}
+# split train and test sets based on unequal_test col
+X_train_new = vendor_data[vendor_data["unequal_test"] == 0].drop(["recent_receipt_7", "market"], axis = 1)
+y_train_new = vendor_data[vendor_data["unequal_test"] == 0].loc[:, "recent_receipt_7"]
+X_test_new = vendor_data[vendor_data["unequal_test"] == 1].drop(["recent_receipt_7", "market"], axis = 1)
+y_test_new = vendor_data[vendor_data["unequal_test"] == 1].loc[:, "recent_receipt_7"]
+
+# look at language, district, and stall type variables based on proportion of occurrence in each data set
+X_train_new["language"].value_counts(normalize = True)
+X_test_new["language"].value_counts(normalize = True)
+X_train_new["district"].value_counts(normalize = True)
+X_test_new["district"].value_counts(normalize = True)
+X_train_new["stall_type"].value_counts(normalize = True)
+X_test_new["stall_type"].value_counts(normalize = True)
+
+# SVM had the better performance, so re-fit the model to the new training data
+pipeline_svm.fit(X_train_new, y_train_new)
+
+auc = roc_auc_score(y_test_new, pipeline_svm.predict(X_test_new))
+```
+
+The variable `district` is the most unbalanced in this new train-test split. In the train set, the highest proportion of one value (3) is about 25% of the set. In the test set, the highest proportion (which is of value 7) is about 40%. In the training set, the proportion of 7's is 0.02, meaning its proportion is 20x higher in the test set. This is also the case for the second most common value (1) in the test set, where it occurs about 20x more often in the test set than training set. The second most common value in the training set is 5, which occurs also about 25% of the time. In the test set, however, the proportion of its occurrence is only about 0.05 (1/5 that of the training set proportion). 
+
+The AUC on the data the model hasn't seen yet is `r py$auc`.
+
+This seems worse than the overall test AUC when we randomly split our data. This may be because of the unbalanced split of some of the predictors (like `district`). This implies that these unbalanced variables may be important. If the distribution of them is associated with how well the model performs, then it may have an effect on predicting the outcome variable. 
+
+## Q6: Introspection
+
+A large downsize of this tool is the potential criminalization of vendors who don't pay the market tax. As you mentioned in the Data section, noncompliance to paying this flat tax often is correlated to poor market conditions. That probably implies that these vendors are struggling already. It would be unproductive to further punish them. In my opinion, predictions of this kind are not a good idea. The resources used to building these models should be instead used to support the market and the vendors.

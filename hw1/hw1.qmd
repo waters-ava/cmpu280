@@ -1,0 +1,397 @@
+---
+title: "HW 1"
+author: "Ava Waters"
+date: "2/3/2023"
+subtitle: "due 2/07/23"
+format:
+  html: 
+    theme: "pulse"
+    self-contained: true
+    embed-resources: true
+execute: 
+  warning: false
+  message: false
+link-citations: yes
+fig-asp: 0.618
+fig-width: 10
+editor_options: 
+  chunk_output_type: inline
+---
+
+In this homework, we will practice doing data science in both R and Python. Using
+the tools introduced in the first few lectures in the class, you will answer
+some important questions about movies and jobs. 
+
+Please remember that this homework is to be done individually! 
+
+**Look at `hw2_instructions.html` for more information on the two data sets and
+for helpful hints throughout.**
+
+# Set Up
+
+Clone the repo as you have done for the labs. Your repo will have a `hw1.Rproj`
+file. Open this file in RStudio *first* before opening `hw1.qmd`.
+
+## YAML
+
+Add an author (you) and date to the YAML (see lab 2 for an example). Then render
+this document. Stage, commit, and push with a meaningful commit message. 
+
+# Exercises 
+
+## R - Movies
+
+For this part of the assignment, you should write all of your code in R.
+
+We will be using the **tidyverse** set of packages for data manipulation. We will
+also use the **lubridate** package for some work with dates, so we are loading 
+them here:
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+For this part of the assignment, your task is to examine data about movie 
+profits over the last several years. A dataset (from 
+[www.the-numbers.com](www.the-numbers.com)) called `“movies.csv”` is 
+in the `data` folder of the repo. See `hw1_instructions` for a description
+of the variables.
+
+Import the data here:
+```{r}
+movies <- read_csv("data/movies.csv", show_col_types=FALSE)
+```
+
+
+### Q1 
+
+How many movies are in this data set? 
+
+There are `r nrow(movies)` movies in this data set.
+
+What is the range of years represented in the data? To answer
+this question, create a new column (remember that in R to permanently 
+add a column, we need to overwrite the original object; we can use the `mutate`
+function to add a column) called `year` 
+that contains just the year a movie was released.
+
+```{r}
+# turn date into date object and extract the year
+movies <- movies %>% mutate(year=year(mdy(movies$release_date))) 
+```
+
+The range represented in the data is `r max(movies$year) - min(movies$year)` years, from 
+`r min(movies$year)` to `r max(movies$year)`.
+
+### Q2 
+
+In a new column called `net`, add together the domestic gross income and the 
+worldwide gross income for each movie, and then subtract the production budget.
+Then sort the data frame base on this new column so that the most
+profitable movies are at the top. What were the five most profitable movies in this
+dataset? 
+
+```{r}
+movies <- movies %>% mutate(net=(movies$domestic_gross + movies$worldwide_gross - 
+                         movies$production_budget)) %>% # create net col
+            arrange(desc(net)) # sort in desc order of net profit
+# save top 5 in net profit
+profit_top5 <- as.list(movies[1:5, "movie"])
+```
+The 5 most profitable movies are `r profit_top5$movie`.
+
+### Q3
+
+How many movies in this data set lost money (`net < 0`)?^[There are some recent movies, like Aquaman, that look like “losers” in this dataset because they had just been released. They probably continued to make money after the dataset was published.]
+
+```{r}
+lost_money <- movies %>% filter(net < 0) %>% # filter movies that lost money
+              count() %>% as.numeric() # count number of movies
+```
+There are `r lost_money` movies that lost money.
+
+### Q4 
+
+Let’s think about performance differently. What movies got the most “bang for 
+the buck” in the sense that they earned a high profit on each dollar of their 
+production budget? What five movies did best in these terms? 
+(“For every dollar we put into this movie, we got X dollars back.”) 
+Divide `net` by the production budget, save that value in a new column called
+`rpd` for Return Per Dollar, and sort on that column to answer this question.
+
+```{r}
+movies <- movies %>% mutate(rpd=movies$net/movies$production_budget) %>% # create rpd col
+      arrange(desc(rpd)) # sort in desc order of return per dollar
+# save top 5 in rpd
+rpd_top5 <- as.list(movies[1:5, "movie"])
+```
+The 5 movies that have the highest return per dollar are `r rpd_top5$movie`.
+
+### Q5 
+
+Create a data frame that summarizes the average net profit, average
+production budget, and average return per dollar by genre (remember the `group_by()` and `summarize()` functions!). 
+Call this data frame `genre_summary`. 
+```{r}
+genre_summary <- movies %>% group_by(genre) %>%  # group by genre
+                 summarize(across(c(net, production_budget, rpd), mean)) # calculate
+                 # avg net profit, production budget, and rpd
+```
+
+After creating this data frame, the chunk below will make a nice looking html 
+table of `genre_summary` in the rendered
+output (if you hit the green "run" button, it will also print that nice table below
+the chunk). When you are reading to render, set `eval` to `true`. 
+
+```{r}
+#| eval: true
+#| echo: false
+knitr::kable(genre_summary,
+             digits = 2,
+             col.names = c("Genre", "Average Profit",
+                           "Average Budget", "Average Return per Dollar"))
+```
+
+After you have done this, look at [this article](https://fivethirtyeight.com/features/scary-movies-are-the-best-investment-in-hollywood/), and comment on whether 
+your analysis seems to corroborate Hickey's result or not. 
+
+My analysis does seem to corroborate Hickey's result. The average return per dollar (RPD) for Horror is over three times higher than that of any other movie genre. Hickey mentions that romantic comedies, closely followed by action movies, had much lower return on investments (RPDs). The data does support this, as Comedy and Drama movies have similar RPDs, and Action movies having an even smaller--in fact the smallest--RPD. 
+
+### Q6
+
+Is there a consistent pattern to how MPAA ratings impact return per dollar across
+the major distributors? What about within distributors?
+
+To answer this question, calculate the average return per dollar by movie rating
+and by distributor.
+
+Produce a data frame that has MPAA rating as the first column, and 
+then six more columns, one for each of the six major distributors represented 
+in the data. Each cell in these columns will contain the `rpd` value for
+a certain rating, distributor pair.
+```{r}
+mpaa_df <- movies %>% group_by(mpaa_rating, distributor) %>% # group by rating and distributor
+  summarize(mean=mean(rpd)) %>% # calculate avg rpd for each grouping
+  pivot_wider(id_cols=mpaa_rating, names_from=distributor, values_from=mean) 
+  # expand the distributor col to have each value be its own col 
+
+mpaa_df
+```
+Looking at the tibble above, there does not seem to be a consistent pattern to how MPAA rating impact RPD across the major distributors. There is not one distributor, for every MPAA rating, that consistently has higher or lower RPDs compared to their competitors. There also doesn't seem to be a pattern within distributors. Looking down the columns, there doesn't seem to be a trend of RPD increasing or decreasing as the ratings get stricter. For three of the distributors, their highest RPDs are when the MPAA rating is a G, but I'm not sure I would consider that a pattern.
+
+## Python - Jobs
+
+For this part of the assignment, you should write all of your code in Python.
+
+We will use the reticulate package to help us interface with Python inside of
+our R session, so we load it here: 
+
+```{r}
+library(reticulate)
+```
+
+For this part of the assignment, you will turn your attention to the data set 
+`jobs.csv`. This is real data compiled by the Census Bureau and the Bureau of 
+Labor Statistics. ([Source](https://github.com/rfordatascience/tidytuesday/tree/master/data/2019/2019-03-05), 
+but use the dataset in your repo's `data` folder.) This dataset has information 
+about male and female earnings, by occupation and year. Read `hw1_instructions.html`
+for a description of the variables in the data set.
+
+Import the data in the chunk below as a Pandas DataFrame called `jobs`:
+
+```{python}
+import pandas as pd
+import numpy as np
+
+jobs = pd.read_csv("data/jobs.csv")
+```
+
+### Q1
+
+What does each row of this data frame represent? Remember that in 
+RStudio, you can use the `View()` function (even in a Python chunk), to 
+look at a data frame. 
+
+Each row represents a different type of specific occupation and data about it. This includes the year the data was reported in, a general and more specific job sector, the number of female and male workers, their estimated median earnings, and an overall estimated median earning (regardless of gender).
+
+How many unique occupations are contained in this data set? 
+```{python}
+# count number of unique occupations
+n_occ = len(jobs["occupation"].unique())
+```
+There are `r py$n_occ` occupations in this data set.
+
+How many years of occupational data are contained in this data set, which years
+are they, and how many observations are there per year? 
+```{python}
+# array of unique yrs in data set
+yrs_unique = jobs["year"].unique()
+# num of yrs
+n_yrs = len(yrs_unique)
+# observations per year
+obs_per_yr = jobs["year"].value_counts()
+```
+There are `r py$n_yrs` of occupational data in this data set. The years are `r py$yrs_unique`. The number of observations per year is: `r py$obs_per_yr`.
+
+What do the previous two questions suggest, did the kinds of occupations change
+at all during the years that this data set covers?^[You may ask why this matters. It's always important to get a sense of your data and to see whether categorizations may have changed over the time span it covers, if it is a time series.]
+
+The previous two questions suggest that the kinds of occupations didn't change during the years that this data set covers. Since the number of observations, which is based on specific occupation, doesn't change from year to year, they probably gathered data about the same occupations. 
+
+### Q2
+
+Let's investigate how the wage gap between male and female workers varies 
+by broad job (`major_category`) sector. 
+
+First, create a new column in the `jobs` data frame that is called
+`f_pct_m`. Define this new variable as `total_earnings_female` divided by 
+`total_earnings_male`. Of course, this variable represents female earnings as a
+proportion of male earnings for a particular occupation.
+```{python}
+jobs["f_pct_m"] = jobs["total_earnings_female"] / jobs["total_earnings_male"]
+```
+
+Second, calculate the *weighted* average of `f_pct_m` for each major job
+category, where each occupation is weighted by `total_workers`. 
+(The idea is that sectors with more workers should count more heavily in our average.)
+Store the result in a variable called `f_pct_m_wa`.
+
+Calculating the weighted average (as opposed to the regular average) is
+slightly more complicated with Pandas, so part of the code has been provided
+to you in the chunk below. This chunk will also print a nice table in the 
+rendered output. 
+
+**Notes:**
+
+1. Before rendering, you must change the `eval` chunk option!
+2. You will have to install the **tabulate** package for Python to render this 
+chunk.
+Remember that you can do so by opening a terminal and running 
+`conda install tabulate`.
+
+```{python}
+#| eval: true
+#| output: asis
+f_pct_m_wa = (
+  # what object are we operating on here? Replace the ____ with its name
+  jobs
+  # we are dropping NA (or NaN) in f_pct_m because or average will be mess up
+  # otherwise
+  .dropna(subset=["f_pct_m"])
+  # we need to group by the categories we want
+  .groupby("major_category")
+  # this step does the aggregating
+  .agg(f_pct_m_wa = (
+    pd.NamedAgg(column="f_pct_m", # column that we want to take weighted avg of
+    # we are using a lambda function because pandas by itself does not
+    # have a weighted average function
+    # and by default, agg functions in pandas can only operate on one 
+    # column
+    # you need to replace _______ with the column we will use as weights 
+    aggfunc = lambda x: np.average(x, weights=jobs.loc[x.index, "total_workers"])
+    # quick note: this isn't necessarily the most efficient way to do this
+  )
+  )
+  )
+)
+
+# This will ensure that this data frame is printed out nicely
+f_pct_m_wa.to_html()
+```
+What does this table tell us about the wage gap in these job sectors?
+In which sector is it the highest? In which is it the lowest? Does it seem to
+exist in all sectors?
+
+This table tells us that there is a wage gap in all job sectors because no `f_pct_m_wa` is equal to 1. The highest wage gap is in the management, business, and financial category, with women earning only about 78% of what men earn. Natural resources, construction, and maintenance has the lowest wage gap, with women earning almost 88% of what the men in this field earn.
+
+### Q3 
+
+Is the wage gap smaller in occupations that are a higher proportion female? 
+It may be that there will be more female managers and executives in these 
+occupations, and they will work harder to address wage differentials. This
+would suggest that the closer `f_pct_m` is to 1, the higher the proportion
+*female* it should be (a positive correlation).
+
+Create a variable (column) called `prop_female`, defined as the proportion of 
+workers in each occupation that are male. For instance, if there were 45 male 
+workers and 27 female workers in a particular occupation, that occupation’s 
+value for `prop_female` would be .375.^[Unfortunately the data only has information
+on whether workers identified as male or female; we do not have information
+on workers of other gender identities.]
+```{python}
+# create new col for proportion of female workers
+jobs["prop_female"] = jobs["workers_female"] / jobs["total_workers"]
+```
+
+Then, calculate the correlation between `prop_female` and `f_pct_m`.
+```{python}
+# get r (correlation) value between prop_female and f_pct_m
+r = jobs["prop_female"].corr(jobs["f_pct_m"])
+```
+Does this help us answer our question?
+
+The correlation between proportion of female workers and percent of average male wages earned by female workers is `r py$r`, which is extremely close to zero. This indicates almost no correlation between the two.
+
+It is possible that major job category is a *confounding* variable, and that Simpson's Paradox is at play. Calculate the correlation by major job category. 
+Do this using a `for` loop that loops over unique values of `major_category` and
+prints out the correlation between the two variables in each job category.^[Yes, this may not be the most efficient, but it's a good way to practice using `for` loops.]
+```{python}
+# loop over each major job category
+for mjc in jobs["major_category"].unique():
+  # subset data to only include jobs in the broad sector
+  jobs_subset = jobs[jobs["major_category"]==mjc]
+  # calculate and print correlation
+  print(mjc + ": " + str(jobs_subset["prop_female"].corr(jobs_subset["f_pct_m"])))
+```
+Comment on these correlations. Does the major job category seem to impact the 
+relationship between `prop_female`
+and `f_pct_m`? For which major job categories does it seem that the answer to 
+our question is "yes, the wage gap is smaller in occupations that are a higher 
+proportion female"? Are there any categories where the answer seems to be no?
+
+The major job category seems to impact the relationship between proportion of the workforce being female and female earnings (in relation to male counterpart) for some job sectors. In healthcare, there is a moderate correlation, where a higher amount of women in the broad sector is correlated with smaller wage gaps. Sales and office has a weak correlation in the same direction. Otherwise, most other job sectors have a negligible correlation. Interestingly, management, business, and the financial sector has a negative weak correlation, suggesting that a higher proportion of women employed is correlated to a bigger wage gap. However, none of these correlations are particularly strong, and there may be other confounding variables.
+
+### Q4
+
+Look only at occupations that fall into the Computer, Engineering, and Science
+category. Do this by filtering for this category and making a new data frame
+called `ces`. 
+```{python}
+# filter to computer, engineering, and science job sector
+ces = jobs[jobs["major_category"]=="Computer, Engineering, and Science"]
+```
+
+We want to figure out which occupations in this category have the highest 
+and lowest proportion of female workers over the four years in the data set. We
+currently have four observations for each occupation (one from each year),
+but we want to compare occupations themselves, not occupation-years. So we 
+need to do some summarizing. 
+
+Calculate the regular average of `prop_female` across `year` for each
+`occupation`. Use the template in the last slide of the Lecture 3 slides. 
+```{python}
+# group by occupation, and thus collapse over year, and calculate average 
+# proportion female as avg_prop_f
+ces = ces.groupby("occupation").agg(avg_prop_f=pd.NamedAgg(column="prop_female", aggfunc=np.mean))
+print(ces)
+```
+Why do you think it makes more sense to take the simple average here, compared to
+Q2, where we took the weighted average?
+
+It makes sense to take the simple average, rather than weighted average, because the worker population probably doesn't drastically change in (binary) gender breakdown across 4 yrs. The number of workers from year to year is comparable, so there is no need to get too particular about computing weighted values.
+
+What are the occupations with the highest and lowest average proportion female workers
+across the four years? 
+```{python}
+# find index (occupation) with highest avg_prop_f value
+highest_prop_female = ces["avg_prop_f"].idxmax()
+# get corresponding proportion
+hpf_prop = ces.loc[highest_prop_female]
+# find index (occupation) with lowest avg_prop_f value
+lowest_prop_female = ces["avg_prop_f"].idxmin()
+# get corresponding proportion
+lpf_prop = ces.loc[lowest_prop_female]
+```
+
+The occupation with the highest proportion female workers across the 4 years is
+`r py$highest_prop_female` with a proportion of `r py$hpf_prop`. The occupation with the lowest average proportion female workers is `r py$lowest_prop_female` with a proportion of `r py$lpf_prop`.

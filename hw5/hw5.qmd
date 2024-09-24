@@ -1,0 +1,273 @@
+---
+title: "HW 5"
+subtitle: "due 4/25/23"
+author: "Ava Waters"
+date: 4/27/23"
+format:
+  html: 
+    theme: "pulse"
+    self-contained: true
+    embed-resources: true
+fig-asp: 0.618
+fig-width: 10
+---
+**I'm using 2 grace days for this assignment**
+
+**Please remember that this homework is to be done individually!** 
+
+**Look at `hw5_instructions.html` for more information on the two data sets and
+for helpful hints throughout.**
+
+## Packages
+
+```{r r_packages}
+#| message: False
+
+library(tidyverse)
+library(reticulate)
+library(haven)
+```
+
+```{python python_packages}
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+```
+
+# Exercises
+
+```{r}
+# import data
+demo_data <- read_xpt("data/DEMO_J.xpt")
+qstn_data <- read_xpt("data/CBQ_J.xpt")
+lab_data <- read_xpt("data/TCHOL_J.xpt")
+```
+
+
+## Q1 - Merging
+```{python}
+# save data as python objects
+demo_data = r.demo_data
+qstn_data = r.qstn_data
+lab_data = r.lab_data
+
+# inner join
+data = lab_data.merge(demo_data.merge(qstn_data, on="SEQN"), on="SEQN")
+```
+After performing an inner join, there are `r nrow(py$data)` observations.
+
+
+## Q2 - Data Wrangling
+```{python}
+#| message: False
+#| warning: False
+from sklearn.compose import make_column_transformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.decomposition import PCA
+
+# change the gender col to be binary indicator of female (0 or 1)
+data["RIAGENDR"] = data["RIAGENDR"] - 1
+# rename the column to reflect this change
+data = data.rename(columns = {"RIAGENDR":"FEMALE"})
+
+# shift educ values up by 20 so they don't interfere with DMDEDUC3 values
+data["DMDEDUC2"] = data["DMDEDUC2"] + 20
+# fill na with 0
+data[["DMDEDUC2", "DMDEDUC3"]] = data[["DMDEDUC2", "DMDEDUC3"]].fillna(0)
+
+# merge education columns into one col
+data["EDUC"] = data["DMDEDUC2"] + data["DMDEDUC3"]
+
+
+# COLS USED IN PREPROCESSOR (and in final model)
+# change variables to be factors
+cat_cols = ["RIDRETH3", "EDUC", "DMDHREDZ", "INDHHIN2"]
+
+for col in cat_cols:
+  data[col] = pd.Categorical(data[col])
+
+num_cols = ["RIDAGEYR", "DMDHHSIZ", "WTINT2YR",  "INDFMPIR"]
+dim_red_cols = ["CBD071", "CBD111", "CBD121", "CBD131"]
+          
+# standard preprocessing
+preproc1 = make_column_transformer(
+  (StandardScaler(), num_cols + dim_red_cols),
+  (OneHotEncoder(drop=None), cat_cols),
+  remainder = "passthrough",
+  verbose_feature_names_out = False,
+  sparse_threshold=0
+)
+
+# preprocessor for principle component analysis
+preproc2 = make_column_transformer(
+  (PCA(n_components = 2), [0, 1, 2, 3]),
+  remainder = "passthrough",
+  verbose_feature_names_out = False
+)
+```
+I did not choose to convert `LBXTC` to a categorical variable because I think placing it into absolute categories (like high vs. low) is not the best format for interpreting the data. Every body is different, and some levels of cholesterol may be considered less healthy for some than for others, depending on lots of other health and lifestyle factors. For example, Mayo Clinic has different thresholds for what is a risky level of cholesterol for men versus women. I recoded some variables to be factors because the values do not represent the predictor absolutely, but rather represent a category of values for said variable. I also combined two of the education variables because the age predictor does not discriminate between people younger than 20yrs versus older. The two education columns did, but to represent education in a non-stratified way I combined them to have non-overlapping values, with this new column being categorical. Lastly, I performed principle component analysis on the `CBD071`, `CBD111`, `CBD121`, and `CBD131` variables from the consumer data set. These all relate to spending habits specifically on food, as I wanted to capture the relationships between money spent eating out (sit-down vs. takeout) vs. cooking yourself (with food from a grocery store vs. other store) in one variable. 
+
+
+## Q3 - Data Visualization
+```{python}
+#| message: False
+#| warning: False
+
+fig, ax = plt.subplots()
+
+# histogram
+sns.histplot(data = data, x = "LBXTC")
+# mean
+plt.axvline(x=np.mean(data["LBXTC"]), color = "red")
+# median (ignore NaN values)
+plt.axvline(x=np.nanmedian(data["LBXTC"]), color = "blue")
+
+# labels and theme
+ax.set(title = "Distribution of Total Cholesterol from the NHANES 2017-2018 Data",
+       xlabel = "Total Cholesterol (mg/dL)")
+sns.set_style("whitegrid")
+
+plt.show()
+plt.clf()
+```
+I used a histogram to visualize the distribution of cholesterol values from the NHANES '17-'18 participants. I chose this plot because the outcome predictor is numeric, and I want to get a sense of the range of values and where the average values (mean, median, mode) fall. The distribution looks fairly normal but slightly right skewed, with values trialing out to the upper 300s. The blue line represents the median, and the red line represents the mean. The fact that the mean is slightly higher than the median also supports this faint right-skew distribution. Most values fall between 125-225mg/dL. According to Mayo Clinic, levels below 200mg/dL are considered "healthy", and I would say close to 2/3 of the observations fall in this range.
+
+
+## Q4 - Variable Selection
+```{python}
+#| message: False
+#| warning: False
+from sklearn.model_selection import train_test_split
+
+# data frame used to drop NA vals from predictor and outcome cols
+temp_df = data.loc[:,["CBD071", "CBD111", "CBD121", "CBD131", "FEMALE", "RIDAGEYR", "RIDRETH3", 
+          "EDUC", "DMDHHSIZ", "DMDHREDZ", "WTINT2YR", "INDHHIN2", "INDFMPIR", "LBXTC"]]
+temp_df = temp_df.dropna()
+
+# for handling unknown input, i chose to drop these observations. while i do think refusing to supply information about income or education level may indicate being on the lower end of the scale (refusal could reflect shame), i didn't think there were enough variables to set handle_unknown="ignore" in OneHotEncoder. from the categorical vars i'm using, there are about 300 observations where some values are infrequent. this is a very small proportion of total observations, so i think its ok to drop these.
+# there's also probably a more efficient way to do this, but in sake of me getting this hw in 
+temp_df = temp_df[temp_df["EDUC"]!=27]
+temp_df = temp_df[temp_df["EDUC"]!=29]
+temp_df = temp_df[temp_df["INDHHIN2"]!=77]
+temp_df = temp_df[temp_df["INDHHIN2"]!=99]
+
+# choose 10 variables as predictors
+X = temp_df.drop(["LBXTC"], axis=1)
+
+# save outcome var
+y = np.ravel(temp_df["LBXTC"])
+
+# create train test split with 25% in test set
+X_train, X_test, y_train, y_test = train_test_split(X, y, 
+                                                    random_state = 280)
+```
+The first two variables I chose are related to the person's identity that I think may directly correlate to cholesterol level. Gender, as just mentioned, may have different standards for cholesterol and thus perhaps different baseline / average levels. I assume cholesterol also changes with age, as diet and lifestyle habits will change. Weight *may* indicate some aspect of health, and I included education level (for people both under and over 20yrs) because that may be an indicator of their standards of living (less educated may mean lower standard). Race may also indirectly affect access to nutritious food reflected through systemic inequality. I also included variables about the household, like number of people and income, as it represents the unit of living and may be more informative than family for people living with members outside their nuclear family. Perhaps a larger household is a proxy of standard of living or indicates how mch disposable income this household has to invest in foods. Lastly, I included the features on which I will be performing PCA, related to spending habits on food.
+
+
+## Q4 - Choosing Models
+
+The first model I think would do well for this problem and my chosen variables is a LASSO regression. Linear regression is often more intuitive than other models, so interpreting the coefficient estimates may be easier for people to which this information applies. Using LASSO also can help evaluate what predictors are the most important, since I am not sure that the ones I selected are all relevant to predicting total cholesterol. Because LASSO is a bit more complicated than MLR, it often provides higher accuracy by reducing variance while still being fairly easy to understand and interpret.
+
+The second model I am choosing is a regression GBM. This model is a boosted random forest, which often avoids overfitting and can lead to more accurate models. Decision trees are also one of the most interpretable methods, making it useful for the general public. They display the information in an accessible way, while also being relatively informative and accurate, so the public could use this information to help guide their lifestyle choices or share this information with others. It banks of the fact that the forest can grow slowly, and each decision made relies on previous ones (somewhat of a conceptually non-greedy approach in terms of accuracy). This may yield to a model with higher predictive power, and thus better fitting.
+
+
+## Q5 - Fitting Models
+```{python}
+#| message: False
+#| warning: False
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LassoCV
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.model_selection import KFold, GridSearchCV
+
+# i honestly don't have a justification for choosing this to be the range of values, i took it from previous homework / classwork
+alphas = 10**np.linspace(10,-2,100)
+
+# LASSO model
+pipe_lasso = Pipeline(
+  [
+    ("preprocessor1", preproc1),
+    ("preprocessor2", preproc2),
+    ("lasso", LassoCV(alphas = alphas))
+  ]
+).fit(X_train, y_train) # will fit most optimal model once best alpha is found
+
+
+# parameters to optimize for GBM (again, i took this from a previous hw and don't have a sound justification from choosing from these values)
+b = np.arange(100, 5002, 1000)
+lamb = [0.001, 0.01, 0.1]
+d = [1, 2, 3, 4]
+
+# cross-validation method used
+cv = KFold(n_splits=5)
+
+# GBM model
+pipe_gbm = Pipeline(
+  [
+    ("preprocessor1", preproc1),
+    ("preprocessor2", preproc2),
+    ("gbm", GradientBoostingRegressor(random_state = 0, subsample = 0.5))
+  ]
+)
+
+param_grid_gbm = dict(
+  gbm__n_estimators = b,
+  gbm__learning_rate = lamb,
+  gbm__max_depth = d
+)
+
+# perfom grid search to find optimal tuning params
+grid_gbm = (
+  GridSearchCV(pipe_gbm, param_grid = param_grid_gbm, 
+               cv = cv, scoring = "neg_mean_squared_error")
+  .fit(X_train, y_train)
+)
+```
+I chose to tune the hyperparameters for both my LASSO and GBM model. I did so to find the most optimal model that will minimize MSE. Since I'm not very familiar with the data (or ML for that matter), I don't have an intuition for what parameters are usually optimal under different conditions. For the LASSO model, I chose the best $\lambda$ value, which controls the relative impact of the shrinkage penalty, using `LassoCV`. This function takes a range of $\lambda$ values and finds the best one. The GBM has multiple tuning parameters, including `B`, the number of trees, $\lambda$, the shrinkage parameter that has the same functionality as the one used in the LASSO model, and `d`, the number of splits which indicates the interaction depth. To find the optimal values, I used `GridSearchCV` which conducts an exhaustive search over all possible combinations of these parameters to find the best fitting GBM model. 
+
+## Q6 - Compare the two models
+```{python}
+#| message: False
+#| warning: False
+from sklearn.metrics import mean_squared_error
+
+# save best GBM model and fit to training data
+pipe_gbm_optimal = grid_gbm.best_estimator_
+# explore best tuning params
+params_optimal = grid_gbm.best_params_
+# fit optimal model to training data
+pipe_gbm_optimal.fit(X_train, y_train)
+
+# look at best alpha level for LASSO
+lamb_optimal = pipe_lasso["lasso"].alpha_
+
+# look at coefficient estimates (not actually printing bc there are lots of dummy vars)
+# lasso_df = pd.DataFrame({
+#   "Predictor":pipe_lasso["preprocessor2"].get_feature_names_out(),
+#   "Estimate":pipe_lasso["lasso"].coef_
+#   }
+# )
+  
+#lasso_df
+
+# feature importance for GBM model (not actually plotting bc there are lots of dummy vars)
+# importances = pipe_gbm_optimal['gbm'].feature_importances_
+# importances = pd.DataFrame(importances, 
+#                            columns = ["Variable Importance"])
+# importances['Features'] = pipe_gbm_optimal['preprocessor2'].get_feature_names_out()
+# 
+# fig, ax = plt.subplots()
+# sns.barplot(
+#   x = "Variable Importance", y = "Features", data = importances,
+#   ax = ax)
+# fig.subplots_adjust(left=0.25)
+# plt.show()
+
+# evaluate the models using MSE
+lasso_mse = mean_squared_error(y_test, pipe_lasso.predict(X_test))
+gbm_mse = mean_squared_error(y_test, pipe_gbm_optimal.predict(X_test))
+```
+According to the MSEs, the GBM model performs better in predicting total cholesterol levels. It has a slightly smaller MSE value of `r py$gbm_mse`, compared to the LASSO's MSE of `r py$lasso_mse`. Since MSE indicates how off the predictions are from expected values, a smaller value indicates a better fit. Both did not perform well, as these are extremely high MSE values.
+
+I chose to compare the models using MSE on the test set. I think this is an appropriate way to measure model performance because they are regression models and MSE gives an absolute measure of goodness of fit. Because MSE is calculated using the squared error between each predicted value and actual value in the test set, it provides a direct metric of how off each of the models predicted values are from expected. If the goal of the models is to be able to predict total cholesterol levels, then MSE seems like a valid measure to evaluate their performances. 

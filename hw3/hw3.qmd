@@ -1,0 +1,461 @@
+---
+title: "HW 3"
+subtitle: "due 3/22/23"
+author: "Ava Waters"
+date: "3/1/23"
+format:
+  html: 
+    theme: "pulse"
+    self-contained: true
+    embed-resources: true
+fig-asp: 0.618
+fig-width: 10
+execute:
+  warnings: false
+  messages: false
+---
+
+Please remember that this homework is to be done individually! 
+
+**Look at `hw3_instructions.html` for more information on the two data sets and
+for helpful hints throughout.**
+
+```{r}
+#Load R packages here
+library(reticulate)
+library(tidyverse)
+```
+
+
+```{python}
+# import necessary python packages here
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.compose import make_column_transformer
+from sklearn.linear_model import LinearRegression 
+from sklearn.model_selection import cross_val_predict, train_test_split
+from sklearn.model_selection import GroupKFold, cross_val_score 
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.linear_model import Ridge, RidgeCV, Lasso, LassoCV, ElasticNetCV
+from sklearn.datasets import make_regression
+```
+
+# Part 1: Regularization with Correlated Predictors
+
+## Simulating Data
+
+```{r}
+set.seed(1966) # World Cup in England, won (robbed?) by England against Germany
+
+# number of observations
+n <- 1000
+p_uninformative <- 5
+
+# simulate informative predictors
+x1 <- rnorm(n, mean = 5, sd = 1.5)
+x2 <- rpois(n, lambda = abs(x1 + 10))
+x3 <- x1 + 1.25 * x2 + rnorm(n, mean = 1, sd = 1)
+x4 <- 20 * rbeta(n, shape1 = 2, shape2 = 3)
+x5 <- -1 * sample(c(-1, 0, 1), size = n, 
+                  prob = c(1/6, 1/6, 2/3),
+                  replace = TRUE) * rgamma(n, shape = 1, rate = 5)
+
+# binding informative xs together
+X_inform <- cbind(x1, x2, x3, x4, x5)
+colnames(X_inform) <- paste0("x", 1:5)
+
+# true betas
+betas <- c(0.5, 0.15, 0.35, 1.33, -10)
+# true beta * sd = true beta for scaled variables
+standardized_betas <- betas * apply(X_inform, MARGIN = 2, FUN = sd)
+
+# simulate y
+y <- X_inform %*% betas + #systematic component 
+  rnorm(n, mean = 0, 4) # stochastic component
+
+# simulating 5 *un*informative predictors
+X_uninform <- matrix(rnorm(n * p_uninformative, mean = 2, sd = 2),
+                 ncol = p_uninformative, nrow = n,
+                 dimnames = list(NULL, paste0("x", 6:(5 + p_uninformative))))
+
+# putting all together into a data set
+data_sim <- data.frame(y = y, X_inform, X_uninform)
+
+# making entire coefficient vector (including noninformative Xs)
+all_betas <- c(standardized_betas, rep(0, times = p_uninformative))
+```
+
+```{python}
+data_sim = r.data_sim
+all_betas = r.all_betas
+```
+
+## Q1
+```{python}
+# glimpse at data_sim
+data_sim.head()
+
+# informative predictors
+pred_inf = ["x1", "x2", "x3", "x4", "x5"]
+
+for pred in pred_inf:
+  # np.corrcoef returns a matrix, i am saving only the value of interest
+  corr = np.corrcoef(data_sim[pred], data_sim["y"], rowvar=False)[0][1]
+  # calc and print r (correlation)
+  print("predictor " + pred + " correlation: " + str(corr))
+```
+The two variables that have the strongest correlation are x4 and x3. The correlation between x4 and y is 0.6785, and the correlation between x3 and y is 0.4156.
+
+## Q2
+```{python}
+# function that takes a transformer and a model instantiator 
+# and returns a pipeline with two components: 
+# the transformer called "preprocess" and the model called "model"
+def make_pipe(transformer, mod_inst):
+  pipeline = Pipeline([('preprocess', transformer),
+                       ('model', mod_inst)])
+
+  return pipeline
+```
+
+## Q3
+```{python}
+# make data frame with only the features
+X = data_sim.drop(["y"], axis=1)
+
+# series with outcome var
+y = data_sim["y"]
+```
+
+## Q4
+```{python}
+# make preprocessor
+preprocessor = make_column_transformer((StandardScaler(), X.columns),
+               verbose_feature_names_out=False)
+```
+
+## Q5
+```{python}
+# train / validation set split
+X_train, X_test, y_train, y_test = train_test_split(
+  X, y, random_state = 1954)
+```
+
+## Q6
+```{python}
+# linear regression model
+pipeline_lr = make_pipe(preprocessor, LinearRegression())
+pipeline_lr.fit(X_train, y_train)
+
+# Ridge model
+pipeline_ridge = make_pipe(preprocessor, RidgeCV(alphas = np.logspace(-5, 5, 100), store_cv_values = True))
+pipeline_ridge.fit(X_train, y_train)
+
+# LASSO model
+pipeline_lasso = make_pipe(preprocessor, LassoCV(alphas = np.logspace(-5, 5, 100)))
+pipeline_lasso.fit(X_train, y_train)
+```
+
+## Q7
+```{python}
+# save optimal alphas
+ridge_alpha = pipeline_ridge["model"].alpha_
+lasso_alpha = pipeline_lasso["model"].alpha_
+```
+The optimal alpha found via CV for the Ridge model is `r py$ridge_alpha`.
+
+The optimal alpha found via CV for the LASSO model is `r py$lasso_alpha`.
+
+## Q8
+```{python}
+# create a data frame with betas 
+# all_betas has real beta values
+# .coef_ attribute of models gets beta estimates
+betas = pd.DataFrame(list(zip(all_betas, pipeline_lr["model"].coef_, pipeline_ridge["model"].coef_, pipeline_lasso["model"].coef_)), columns = ["true_coef", "linear", "Ridge", "LASSO"])
+
+betas
+```
+The LASSO has shrunken some predictors. It shrank the beta associated with x2, even though it is informative. It also failed to shrink the beta for x6, which we know is an uninformative predictor. The model did this to only include the features it thinks are helpful in predicting y. This complicates our ability to infer causality using the LASSO model. Because it gives weight to a beta we know doesn't have any relationship to the outcome variable, we know we cannot conclude causality. Because it excludes a feature we know is informative of the outcome variable, we know any causality it does predict is not completely accurate.
+
+## Q9
+```{python}
+# predict y values
+ridge_y_pred = pipeline_ridge.predict(X_test)
+lasso_y_pred = pipeline_lasso.predict(X_test)
+
+# get MSE for models
+ridge_mse = mean_squared_error(y_test, ridge_y_pred)
+lasso_mse = mean_squared_error(y_test, lasso_y_pred)
+
+print("Ridge MSE: " + str(ridge_mse))
+print("LASSO MSE: " + str(lasso_mse))
+```
+The RIDGE model does a slightly better job predicting for the validation set. 
+
+## Q10
+```{python}
+from sklearn.model_selection import RepeatedKFold, cross_validate
+
+# determine alphas for cross validation
+alphas = np.logspace(-5, 5, 100) 
+
+# create cross-validation object with 5 folds and 5 repeats
+cv = RepeatedKFold(n_splits=5, n_repeats=5, random_state=0)
+
+# make ridgeCV model and perform cross validation using Q4 function
+pipeline_ridge = make_pipe(preprocessor, RidgeCV(alphas = alphas))
+# cross_validate does transforming and fitting for us
+cv_model_ridge = cross_validate(
+    pipeline_ridge,
+    X,
+    y,
+    cv=cv,
+    return_estimator=True, # otherwise we wouldn't be able to extract coefs
+    n_jobs=1,
+)
+
+# do the same for the LASSO
+pipeline_lasso = make_pipe(preprocessor, LassoCV(alphas = alphas))
+cv_model_lasso = cross_validate(
+    pipeline_lasso,
+    X,
+    y,
+    cv=cv,
+    return_estimator=True, # otherwise we wouldn't be able to extract coefs
+    n_jobs=1,
+)
+
+# get feature names for data frame
+feature_names = pipeline_ridge['preprocess'].get_feature_names_out()
+
+# make data frame of all 25 sets of ridge coefficient estimates
+coefs_ridge = pd.DataFrame(
+    [est[-1].coef_ for est in cv_model_ridge["estimator"]],
+    columns = feature_names
+)
+
+# make data frame of all 25 sets of lasso coefficient estimates
+coefs_lasso = pd.DataFrame(
+    [est[-1].coef_ for est in cv_model_lasso["estimator"]],
+    columns = feature_names
+)
+
+# plotting both side by side
+fig, axes = plt.subplots(1, 2)
+# two axes now because two subplots
+ax0 = axes[0]
+ax1 = axes[1]
+
+# Ridge plot
+sns.stripplot(data=coefs_ridge, orient="h", palette="dark:k", alpha=0.5, ax = ax0)
+sns.boxplot(data=coefs_ridge, orient="h", color="cyan", saturation=0.5, whis=10, ax = ax0)
+ax0.axvline(x=0, color=".5")
+ax0.set(
+  title = "Ridge"
+)
+
+# LASSO plot
+sns.stripplot(data=coefs_lasso, orient="h", palette="dark:k", alpha=0.5, ax = ax1)
+sns.boxplot(data=coefs_lasso, orient="h", color="cyan", saturation=0.5, whis=10, ax = ax1)
+ax1.axvline(x=0, color=".5")
+ax1.set(
+  title = "LASSO"
+)
+
+# overall title
+fig.suptitle("Coefficient Variablility Across Folds")
+fig.supxlabel("Coefficient Estimate")
+fig.supylabel("Coefficient")
+
+plt.show()
+plt.clf()
+```
+The LASSO model seems to create more stable coefficient estimates across folds for `x2` and `x3`. This can be seen in comparing the boxplots, as the LASSO ones are smaller and thus have a smaller and more stable range of values. 
+
+# Part 2: Predicting Deforestation
+```{python}
+# import data sets
+forest = pd.read_csv("data/forest.csv")
+forest_area = pd.read_csv("data/forest_area.csv")
+soybean_use = pd.read_csv("data/soybean_use.csv")
+vegetable_oil = pd.read_csv("data/vegetable_oil.csv")
+vdem = pd.read_csv("data/vdem_subset_hw3.csv")
+```
+
+## Q1
+```{python}
+# drop where code is NA
+forest_area = forest_area[forest_area["code"].notnull()]
+soybean_use = soybean_use[soybean_use["code"].notnull()]
+vegetable_oil = vegetable_oil[vegetable_oil["code"].notnull()]
+
+# turn e_regionpol_6c into categorical variable
+vdem["e_regionpol_6C"] = vdem["e_regionpol_6C"].astype("category")
+```
+
+## Q2
+```{python}
+# pivot wider and switch entity, code, and year back to columns
+vegetable_oil = vegetable_oil.pivot(index=["entity", "code", "year"], columns="crop_oil", values="production").reset_index(names=["entity", "code", "year"])
+
+vegetable_oil.head()
+```
+
+## Q3
+```{python}
+# make new data frame by merging all data sets together
+# also merging on entity so i don't have duplicate columns
+deforest = pd.merge(pd.merge(pd.merge(pd.merge(forest, forest_area, on = ["code", "year", "entity"]), soybean_use, on = ["code", "year", "entity"]), vegetable_oil, on = ["code", "year", "entity"]), vdem, left_on = ["code", "year"], right_on = ["country_text_id", "year"])
+
+# create new variable
+deforest["forest_change_per_sq_km"] = deforest["net_forest_conversion"] * 100 / deforest["e_area"]
+
+deforest.head()
+```
+
+## Q4
+```{python}
+# drop columns where 70+% of values are non-NA
+# then, drop rows with NA values
+deforest = deforest.dropna(thresh = (len(deforest) * 0.7), axis = 1).dropna()
+
+# make X
+X = deforest.drop(["forest_area", "code", "entity", "e_area", "net_forest_conversion", 
+                   "country_name", "country_text_id", "forest_change_per_sq_km"], axis = 1)
+
+# make country_years
+country_years = deforest[["code", "entity", "year"]]
+
+# make y
+y = deforest["forest_change_per_sq_km"]
+```
+
+## Q5
+```{python}
+fig, ax = plt.subplots()
+
+# create histogram
+sns.set_style("whitegrid")
+sns.histplot(data = y, ax = ax, color = "green")
+# set title and axis label
+ax.set(title = "Forest Change per Squared Km", xlabel = "Forest Change (per sq. km)")
+
+plt.show()
+```
+The histogram seems to be centered at 0. It follows a relatively normal shape, perhaps a bit skewed left. The spread seems to be relatively large, with values about 100 units (in $km^2$) away from the center. However, most values fall relatively close to the center.
+
+## Q6
+```{python}
+grouped_cv = GroupKFold(n_splits = 10)
+# split data
+grouped_cv.split(X, y, groups = country_years["entity"])
+```
+
+## Q7
+```{python}
+# columns we want to use for StandardScaler()
+num_cols = X.drop(["e_regionpol_6C"], axis=1).columns
+
+transformer = make_column_transformer((OneHotEncoder(drop = "first"),
+                                                     ["e_regionpol_6C"]), 
+                                      (StandardScaler(), num_cols),
+                                      verbose_feature_names_out=False)
+
+# make pipelines
+pipeline_lin = make_pipe(transformer, LinearRegression())
+
+pipeline_ridge_cv = make_pipe(transformer, RidgeCV(alphas = np.logspace(-5, 5, 100)))
+
+pipeline_lasso_cv = make_pipe(transformer, LassoCV(alphas = np.logspace(-5, 5, 100), max_iter = 40000))
+```
+
+## Q8
+```{python}
+# cross validation model for linear 
+cv_lin = cross_validate(
+    pipeline_lin,
+    X,
+    y,
+    cv=grouped_cv,
+    return_estimator=True, # otherwise we wouldn't be able to extract coefs
+    n_jobs=1,
+    groups=country_years["entity"],
+    scoring="neg_mean_squared_error",
+)
+
+           
+# cross validation model for Ridge 
+cv_ridge = cross_validate(
+    pipeline_ridge_cv,
+    X,
+    y,
+    cv=grouped_cv,
+    return_estimator=True, # otherwise we wouldn't be able to extract coefs
+    n_jobs=1,
+    groups=country_years["entity"],
+    scoring="neg_mean_squared_error",
+)
+           
+# cross validation model for Ridge 
+cv_lasso = cross_validate(
+    pipeline_lasso_cv,
+    X,
+    y,
+    cv=grouped_cv,
+    return_estimator=True, # otherwise we wouldn't be able to extract coefs
+    n_jobs=1,
+    groups=country_years["entity"],
+    scoring="neg_mean_squared_error",
+)
+```
+
+## Q9
+```{python}
+
+mse = pd.DataFrame(list(zip(cv_lin["test_score"], cv_ridge["test_score"], cv_lasso["test_score"])), columns = ["linear", "Ridge", "LASSO"])
+
+mse
+
+mse.mean(axis=0)
+```
+Looking at the data frame with all MSEs for the three models (where the index is one less than the fold), the linear and Ridge models seem to perform pretty comparatively. The LASSO model seems to do better in about half of the folds, but worse in the other half. For example, the MSE is much smaller in folds 1, 4, 6, and 8, but worse in folds 2, 3 and 10. Averaging across all folds, LASSO tends to perform the best.
+
+## Q10
+```{python}
+# get coefficient values for each fold
+coefs = [est["model"].coef_ for est in cv_lasso["estimator"]]
+
+# get col names (coefficients) for data frame
+cols = cv_lasso["estimator"][1]['preprocess'].get_feature_names_out()
+
+# tidy up feature names
+cols = [col.replace("e_regionpol_6C_", "Geopolitical Region: ") for col in cols.tolist()]
+cols = [col.replace("e_", "") for col in cols]
+cols = [col.capitalize() for col in cols]
+
+# make data frame of all lasso coefficient estimates
+coefs_lasso_cv = pd.DataFrame(coefs, columns = cols)
+
+# turn data into strip plot
+fig, ax = plt.subplots()
+
+sns.stripplot(data = coefs_lasso_cv, orient="h", palette="dark:k", alpha=0.5, ax = ax)
+ax.set(title = "Coefficient Estimates for LASSO Model Across Folds", 
+       xlabel = "Coefficient Estimate", ylabel = "Feature")
+       
+# called so Y-axis labels aren't cut off
+plt.tight_layout()
+plt.show()
+plt.clf()
+
+# print out data frame to look at what coefficients zero'd out
+coefs_lasso_cv
+```
+
+Across the ten folds, the coefficients for the LASSO model do seem relatively stable. In the strip plot, the coefficients associated with `Geopolitical Region: 2` and `v2x_delibdem` seem to be the least stable, indicated by the wider spread of dots for those rows. `Geopolitical Region: 2` has coefficient estimates ranging in value by about 15, which is quite large. Looking at the table above, where each row is one fold, is an easy way to visualize the different estimates. In all ten folds, the coefficients associated with geopolitical regions 3-6 are all zero'd out, as well as `v2x_polyarchy`. Besides fold 1, the estimates for the `processed` feature are all zero, and besides fold 8, the estimates for the `soybean` predictor are all zero. 
+
+Fold 2 seems to have zero'd out all coefficients, which seems odd. `e_gdppc` zero'd out in half of the folds, and `e_pop` zero'd out in 3 of the 10. Otherwise, most of the other predictors have non-zero values across most folds. 

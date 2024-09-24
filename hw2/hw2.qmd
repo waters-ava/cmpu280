@@ -1,0 +1,112 @@
+---
+title: "HW 2"
+subtitle: "due 2/16/23"
+author: "Ava Waters"
+date: "2/13/23"
+format:
+  html: 
+    theme: "pulse"
+    self-contained: true
+    embed-resources: true
+fig-asp: 0.618
+fig-width: 10
+execute: 
+  warning: false
+  message: false
+---
+
+Please remember that this homework is to be done individually! 
+
+**Look at `hw2_instructions.html` for more information on the two data sets and
+for helpful hints throughout.**
+
+```{r}
+library(tidyverse)
+library(robotstxt)
+library(rvest)
+library(scales)
+```
+
+
+```{python}
+# import packages
+import matplotlib.pyplot as plt
+import seaborn as sns
+```
+
+## Q1
+```{r}
+# load file
+pac_all <- read_csv("data/pac-all.csv", show_col_types=FALSE)
+```
+
+There are `r nrow(pac_all)` observations and `r ncol(pac_all)` variables.
+
+## Q2
+```{r}
+# separate country_parent col into country and parent cols
+pac_all <- pac_all %>% separate(country_parent, c("country", "parent"), sep="/", extra="merge") 
+
+# print first 10 rows
+pac_all
+```
+
+## Q3
+```{r}
+# remove $ and , from the columns and , using | as the OR operator
+# and convert them to nuumeric
+pac_all$total <- str_remove_all(pac_all$total, "\\$|,") %>% as.numeric()
+pac_all$dems <- str_remove_all(pac_all$dems, "\\$|,") %>% as.numeric()
+pac_all$repubs <- str_remove_all(pac_all$repubs, "\\$|,") %>% as.numeric()
+
+# print first 10 rows
+pac_all
+```
+
+## Q4
+```{python}
+# save pac_all as python df so i don't have to keep accessing it thru the R interface object
+pac_all = r.pac_all
+
+# filter to include data abt Canada and Mexico
+# group by country and year
+# sum the total col
+# turn back into data frame
+can_mex_pac = pac_all[pac_all["country"].isin(["Canada", "Mexico"])].groupby(["country", "year"])["total"].sum().reset_index(name="total")
+
+# make lineplot
+fig, ax = plt.subplots()
+sns.set_style("whitegrid")
+
+sns.lineplot(data = can_mex_pac, x = "year", y = "total", hue = "country", ax = ax)
+
+# add figure and axes labels
+ax.set(title = "Contributions from Canada- and Mexico-Connected PACs", xlabel = "Year", ylabel = "Amount (Millions of USD)")
+
+# edit legend title
+plt.legend(title="Country")
+
+plt.show()
+```
+The graph reveals that Canadian PACs have spent more than Mexican PACs every midterm-election since 2000. From 2014 to 2018, Canada increased their spending by over a million. After 2016, Mexico decreased their spending, which makes sense given the President's view towards Mexico. While there is no breakdown of the proportion of money going to each political party, it would be interesting to see what party Canada was supporting more after 2014.
+
+## Q5
+```{r}
+# load packages
+library(ggplot2)
+library(scales)
+
+uk_pac <- pac_all %>% filter(country=="UK") %>% # filter to only include UK data
+          pivot_longer(cols=c("dems", "repubs"), names_to="party", values_to="amt") %>% # pivot longer to distinguish btwn parties
+          group_by(party, year) %>% # group by party and year bc we want one observation for each unique pairing
+          summarize(amt_by_party=sum(amt)) # sum the amt contributed
+
+uk_pac %>% ggplot(aes(x=year, y=amt_by_party, color=party)) + geom_line() + # make line graph
+           labs(title="Contribution to US politics from UK-Connected PACs", subtitle="By party, overtime", 
+           x="Year", y="Amount", color="Party") + # add figure and axes labels
+           theme_bw() + # change theme
+           scale_color_manual(labels=c("Democrat", "Republican"), values=c("blue", "red")) + # clean up legend
+           scale_y_continuous(limits=c(NA, NA), labels=label_dollar(scale=0.000001, suffix="M")) # set y-axis
+```
+
+The graph reveals that UK-Connected PACs, in general, spent more for the Republican party than the Democratic party. Before 2010, the UK was spending almost a million more towards the Republican party than the Democratic party, even as spendings towards both parties increased. In 2010, the UK-Connected PACs spent about \$300k more on the Democratic party, the only year in which they favored them. After, they decreased spending for the Democrats and increased that of the Republicans, creating the biggest spending differential in 2016 with about \$1.5M more going towards the Republican party. This is also the year Trump won the election, which may have been supported by these international contributions.
